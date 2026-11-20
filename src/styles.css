@@ -1,7 +1,8 @@
 /*
  * @pablovsouza/react-datagrid: theme by CSS variables (set them on `.rdg`, a parent or :root).
  *
- * The base styles sit in the `rdg` layer, so any app stylesheet (layered or not) overrides them. The
+ * The base styles sit in the `rdg` layer. Layers declared first lose: an app with its own layers (Tailwind)
+ * declares `@layer rdg;` before them, so its utilities override the grid's base styles. The
  * selection colours are the exception: unlayered on purpose, so a colour a cell sets for itself (status
  * colours, utility classes) never makes selected text unreadable. Change them through the variables.
  */
@@ -52,11 +53,17 @@
     -webkit-overflow-scrolling: touch;
   }
 
+  /* The header colour may be translucent or a gradient: the grid colour underneath keeps it opaque. */
   .rdg-header {
     position: sticky;
     top: 0;
     z-index: 2;
     width: 100%;
+    background: var(--rdg-bg);
+  }
+
+  .rdg-header-row {
+    background: var(--rdg-header-bg);
   }
 
   .rdg-header-row,
@@ -73,7 +80,6 @@
     box-sizing: border-box;
     padding: var(--rdg-cell-padding);
     overflow: hidden;
-    background: var(--rdg-header-bg);
     color: var(--rdg-header-fg);
     border-bottom: 1px solid var(--rdg-border);
     font-weight: 600;
@@ -148,7 +154,7 @@
   }
 
   .rdg-header-cell[data-pinned] {
-    background: var(--rdg-header-bg);
+    background: var(--rdg-header-bg-pinned, var(--rdg-bg));
   }
 
   .rdg-cell-text {

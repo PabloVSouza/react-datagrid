@@ -232,7 +232,15 @@ Mapping an app's theme, e.g. one with its own selection variables:
 }
 ```
 
-The base styles are in the CSS layer `rdg`, so any app stylesheet overrides them. The selected-row text colour
+The base styles are in the CSS layer `rdg`. Unlayered app CSS always overrides them; an app that uses layers
+(Tailwind v4 does) declares `rdg` first so its utilities win too:
+
+```css
+@layer rdg;
+@import 'tailwindcss';
+```
+
+The selected-row text colour
 is deliberately unlayered: whatever colour a cell sets for itself (status colours, utility classes such as
 Tailwind's `text-*`), selected text takes `--rdg-selected-fg` and never disappears into the selection
 background. Change the colour through the variables.

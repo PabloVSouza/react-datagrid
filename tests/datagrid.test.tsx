@@ -93,6 +93,20 @@ describe('rendering and ARIA', () => {
     expect(grid.getAttribute('aria-rowcount')).toBe('10001')
   })
 
+  it('renders rows before layout (a scroller with no size yet)', () => {
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientHeight')!
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      get: () => 0
+    })
+    try {
+      const { grid } = setup({}, 100)
+      expect(grid.querySelectorAll('[role=row][aria-rowindex]').length - 1).toBeGreaterThan(10)
+    } finally {
+      Object.defineProperty(HTMLElement.prototype, 'clientHeight', descriptor)
+    }
+  })
+
   it('shows the empty content without rows, and no current cell', () => {
     const { grid } = setup({ empty: 'Nothing here' }, 0)
     expect(screen.getByText('Nothing here')).toBeTruthy()

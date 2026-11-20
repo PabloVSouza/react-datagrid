@@ -29,7 +29,7 @@ import {
   type RowData,
   type SortingState
 } from '@tanstack/react-table'
-import { useVirtualizer } from '@tanstack/react-virtual'
+import { observeElementRect, useVirtualizer } from '@tanstack/react-virtual'
 import { DefaultEditor } from './DefaultEditor'
 import { parseTsv, toTsv } from './clipboard'
 import { isTypingKey, navigate, tabTarget } from './keyboard'
@@ -308,7 +308,13 @@ function DataGridInner<T extends RowData>(
     estimateSize: () => rowHeight,
     overscan,
     scrollMargin: headerHeight,
-    scrollPaddingStart: headerHeight
+    scrollPaddingStart: headerHeight,
+    // A scroller with no size yet (not laid out, a hidden window, a test DOM without layout) still
+    // renders the rows a screen would show, instead of none.
+    observeElementRect: (instance, callback) =>
+      observeElementRect(instance, (rect) =>
+        callback(rect.height > 0 ? rect : { width: rect.width, height: window.innerHeight || 600 })
+      )
   })
 
   const scrollIntoView = useCallback(

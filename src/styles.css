@@ -1,0 +1,250 @@
+/*
+ * @pablovsouza/react-datagrid: theme by CSS variables (set them on `.rdg`, a parent or :root).
+ *
+ * The base styles sit in the `rdg` layer, so any app stylesheet (layered or not) overrides them. The
+ * selection colours are the exception: unlayered on purpose, so a colour a cell sets for itself (status
+ * colours, utility classes) never makes selected text unreadable. Change them through the variables.
+ */
+@layer rdg {
+  .rdg {
+    --rdg-bg: Canvas;
+    --rdg-fg: CanvasText;
+    --rdg-border: color-mix(in srgb, CanvasText 14%, transparent);
+    --rdg-header-bg: color-mix(in srgb, CanvasText 5%, Canvas);
+    --rdg-header-fg: CanvasText;
+    --rdg-row-odd-bg: transparent;
+    --rdg-row-hover-bg: color-mix(in srgb, CanvasText 6%, transparent);
+    --rdg-selected-bg: Highlight;
+    --rdg-selected-fg: HighlightText;
+    /* Selection while the grid does not have the focus (desktop grids grey it out; default: the same). */
+    --rdg-selected-bg-inactive: var(--rdg-selected-bg);
+    --rdg-selected-fg-inactive: var(--rdg-selected-fg);
+    /* Cell mode: the cells of a range, and the current cell's outline. */
+    --rdg-range-bg: color-mix(in srgb, var(--rdg-selected-bg) 22%, transparent);
+    --rdg-range-fg: inherit;
+    --rdg-active-outline: var(--rdg-selected-bg);
+    --rdg-editor-bg: Canvas;
+    --rdg-editor-fg: CanvasText;
+    --rdg-invalid: #dc2626;
+    --rdg-font-size: inherit;
+    --rdg-cell-padding: 0 8px;
+
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    min-width: 0;
+    background: var(--rdg-bg);
+    color: var(--rdg-fg);
+    font-size: var(--rdg-font-size);
+    outline: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  .rdg-scroller {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    touch-action: pan-x pan-y;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .rdg-header {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    width: 100%;
+  }
+
+  .rdg-header-row,
+  .rdg-row {
+    display: flex;
+    width: 100%;
+  }
+
+  .rdg-header-cell {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    box-sizing: border-box;
+    padding: var(--rdg-cell-padding);
+    overflow: hidden;
+    background: var(--rdg-header-bg);
+    color: var(--rdg-header-fg);
+    border-bottom: 1px solid var(--rdg-border);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .rdg-header-label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .rdg-sortable {
+    cursor: pointer;
+  }
+
+  .rdg-sort-indicator {
+    flex: none;
+    font-size: 0.7em;
+  }
+
+  .rdg-resize-handle {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 6px;
+    cursor: col-resize;
+    touch-action: none;
+  }
+
+  .rdg-resize-handle:hover {
+    background: var(--rdg-border);
+  }
+
+  .rdg-body {
+    position: relative;
+    width: 100%;
+  }
+
+  .rdg-row {
+    position: absolute;
+    top: 0;
+    left: 0;
+    box-sizing: border-box;
+    border-bottom: 1px solid var(--rdg-border);
+    background: var(--rdg-bg);
+  }
+
+  .rdg-row-odd {
+    background: color-mix(in srgb, var(--rdg-row-odd-bg), var(--rdg-bg));
+  }
+
+  .rdg-row:hover {
+    background: var(--rdg-row-hover-bg);
+  }
+
+  .rdg-cell {
+    display: flex;
+    align-items: center;
+    box-sizing: border-box;
+    padding: var(--rdg-cell-padding);
+    overflow: hidden;
+    white-space: nowrap;
+    background: inherit;
+  }
+
+  .rdg-cell[data-pinned],
+  .rdg-header-cell[data-pinned] {
+    background-color: var(--rdg-bg);
+  }
+
+  .rdg-header-cell[data-pinned] {
+    background: var(--rdg-header-bg);
+  }
+
+  .rdg-cell-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .rdg-align-start {
+    justify-content: flex-start;
+    text-align: left;
+  }
+
+  .rdg-align-center {
+    justify-content: center;
+    text-align: center;
+  }
+
+  .rdg-align-end {
+    justify-content: flex-end;
+    text-align: right;
+  }
+
+  .rdg-align-end .rdg-cell-text,
+  .rdg-align-end .rdg-header-label {
+    text-align: right;
+  }
+
+  .rdg-align-center .rdg-cell-text,
+  .rdg-align-center .rdg-header-label {
+    text-align: center;
+  }
+
+  .rdg[data-selection-mode='cell'] .rdg-cell[data-active] {
+    outline: 2px solid var(--rdg-active-outline);
+    outline-offset: -2px;
+  }
+
+  .rdg-editor,
+  .rdg-editor-slot {
+    width: 100%;
+    min-width: 0;
+    height: 100%;
+    box-sizing: border-box;
+  }
+
+  .rdg-editor {
+    margin: 0;
+    border: 0;
+    padding: 0;
+    background: var(--rdg-editor-bg);
+    color: var(--rdg-editor-fg);
+    font: inherit;
+    outline: none;
+    user-select: text;
+    -webkit-user-select: text;
+  }
+
+  .rdg-editor[aria-invalid='true'] {
+    box-shadow: inset 0 0 0 2px var(--rdg-invalid);
+  }
+
+  .rdg-cell[data-editing] {
+    background: var(--rdg-editor-bg);
+    padding: 0 4px;
+  }
+
+  .rdg-empty {
+    padding: 24px 8px;
+    text-align: center;
+    opacity: 0.7;
+  }
+}
+
+/* Selection colours: unlayered (see the top). Selected rows (row mode) and range cells (cell mode). */
+.rdg-row[aria-selected='true'],
+.rdg-row[aria-selected='true'] .rdg-cell {
+  background: var(--rdg-selected-bg-inactive);
+}
+.rdg-row[aria-selected='true'] .rdg-cell,
+.rdg-row[aria-selected='true'] .rdg-cell * {
+  color: var(--rdg-selected-fg-inactive);
+}
+.rdg:focus-within .rdg-row[aria-selected='true'],
+.rdg:focus-within .rdg-row[aria-selected='true'] .rdg-cell {
+  background: var(--rdg-selected-bg);
+}
+.rdg:focus-within .rdg-row[aria-selected='true'] .rdg-cell,
+.rdg:focus-within .rdg-row[aria-selected='true'] .rdg-cell * {
+  color: var(--rdg-selected-fg);
+}
+.rdg-cell[aria-selected='true']:not([data-editing]) {
+  background: var(--rdg-range-bg);
+}
+.rdg-cell[aria-selected='true']:not([data-editing]),
+.rdg-cell[aria-selected='true']:not([data-editing]) * {
+  color: var(--rdg-range-fg);
+}

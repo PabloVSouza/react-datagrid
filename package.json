@@ -1,0 +1,75 @@
+{
+  "name": "@pablovsouza/react-datagrid",
+  "version": "0.1.0",
+  "description": "Keyboard-first data grid for React: virtualized rows, row and cell selection, ranges, clipboard and in-place editing like a desktop grid.",
+  "private": false,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PabloVSouza/react-datagrid.git"
+  },
+  "bugs": {
+    "url": "https://github.com/PabloVSouza/react-datagrid/issues"
+  },
+  "homepage": "https://github.com/PabloVSouza/react-datagrid#readme",
+  "keywords": [
+    "react",
+    "datagrid",
+    "data-grid",
+    "table",
+    "spreadsheet",
+    "keyboard",
+    "virtualized"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "sideEffects": [
+    "./dist/index.js",
+    "*.css"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./styles.css": "./dist/styles.css"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "npm run build:types && npm run build:css",
+    "build:types": "tsc -p tsconfig.json",
+    "build:css": "node scripts/copy-css.mjs",
+    "prepare": "npm run build",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "dependencies": {
+    "@tanstack/react-table": "^9.3.1",
+    "@tanstack/react-virtual": "^3.14.26"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.13",
+    "@types/node": "^24.19.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "jsdom": "^31.0.1",
+    "prettier": "^3.10.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.1"
+  }
+}

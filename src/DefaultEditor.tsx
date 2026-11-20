@@ -1,0 +1,82 @@
+import { useEffect, useRef, useState } from 'react'
+import type { EditorProps } from './types'
+
+interface DefaultEditorProps<T> extends EditorProps<T> {
+  text: string
+  parse: (text: string) => unknown
+  align: 'start' | 'center' | 'end'
+}
+
+/**
+ * The text editor: Enter / Shift+Enter commit and move down / up, Tab / Shift+Tab right / left, Esc cancels,
+ * leaving the cell commits. A text `parse` rejects (undefined) keeps the editor open, marked invalid.
+ */
+export function DefaultEditor<T>({
+  text,
+  initialText,
+  parse,
+  commit,
+  cancel,
+  align,
+  column
+}: DefaultEditorProps<T>) {
+  const [draft, setDraft] = useState(initialText ?? text)
+  const [invalid, setInvalid] = useState(false)
+  const done = useRef(false)
+  const input = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    const element = input.current
+    if (!element) return
+    element.focus()
+    if (initialText === undefined) element.select()
+    else element.setSelectionRange(element.value.length, element.value.length)
+  }, [initialText])
+
+  const finish = (move: Parameters<typeof commit>[1]) => {
+    const value = parse(draft)
+    if (value === undefined) {
+      setInvalid(true)
+      return false
+    }
+    done.current = true
+    commit(value, move)
+    return true
+  }
+
+  return (
+    <input
+      ref={input}
+      className="rdg-editor"
+      aria-label={typeof column.header === 'string' ? column.header : column.id}
+      aria-invalid={invalid || undefined}
+      value={draft}
+      style={{ textAlign: align === 'start' ? 'left' : align === 'end' ? 'right' : 'center' }}
+      onChange={(event) => {
+        setDraft(event.target.value)
+        setInvalid(false)
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault()
+          finish(event.shiftKey ? 'up' : 'down')
+        } else if (event.key === 'Tab') {
+          event.preventDefault()
+          finish(event.shiftKey ? 'left' : 'right')
+        } else if (event.key === 'Escape') {
+          event.preventDefault()
+          done.current = true
+          cancel()
+        } else return
+        event.stopPropagation()
+      }}
+      onBlur={() => {
+        if (!done.current && !finish('none')) {
+          // An invalid value on focus loss: drop the edit rather than trap the focus.
+          done.current = true
+          cancel()
+        }
+      }}
+    />
+  )
+}

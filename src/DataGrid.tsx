@@ -32,7 +32,7 @@ import {
 import { observeElementRect, useVirtualizer } from '@tanstack/react-virtual'
 import { DefaultEditor } from './DefaultEditor'
 import { parseTsv, toTsv } from './clipboard'
-import { isTypingKey, navigate, tabTarget } from './keyboard'
+import { isTypingKey, navigate, nearestNavigable, normalizeSeek, tabTarget } from './keyboard'
 import {
   boundsOf,
   cellSelected,
@@ -53,6 +53,7 @@ import type {
   DataGridHandle,
   DataGridProps,
   EditMove,
+  RowContext,
   SortItem
 } from './types'
 
@@ -69,6 +70,10 @@ const features = tableFeatures({
 const DEFAULT_WIDTH = 150
 const DEFAULT_MIN_WIDTH = 40
 const LONG_PRESS_MS = 550
+const TYPE_AHEAD_MS = 1000
+
+const isThenable = (value: unknown): value is PromiseLike<unknown> =>
+  !!value && typeof (value as PromiseLike<unknown>).then === 'function'
 
 /** A value that is controlled when the prop is not `undefined`, else kept inside. */
 function useControlled<V>(
@@ -134,11 +139,13 @@ interface EditingState {
   row: number
   col: number
   initialText?: string
+  pending?: boolean
+  rejections?: number
 }
 
 function DataGridInner<T extends RowData>(
   props: DataGridProps<T>,
-  ref: ForwardedRef<DataGridHandle>
+  ref: ForwardedRef<DataGridHandle<T>>
 ) {
   const {
     rows,
@@ -150,9 +157,16 @@ function DataGridInner<T extends RowData>(
     overscan = 8,
     editable = false,
     manualSorting = false,
-    tabBehavior = selectionMode === 'cell' ? 'cell' : 'leave'
+    tabBehavior = selectionMode === 'cell' ? 'cell' : 'leave',
+    homeEndRows = false,
+    editNext = 'cell',
+    showHeader = true
   } = props
-  const headerHeight = props.headerHeight ?? rowHeight
+  const headerHeight = showHeader ? (props.headerHeight ?? rowHeight) : 0
+  const footerRows = props.footerRows ?? []
+  const footerHeight = footerRows.length * rowHeight
+  // ARIA row numbers start at 1, with the header row first when shown.
+  const rowBase = showHeader ? 2 : 1
   const gridId = useId().replace(/:/g, '')
   const rootRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -242,6 +256,19 @@ function DataGridInner<T extends RowData>(
   })
   const rowCount = displayedRows.length
   const colCount = visibleColumns.length
+  const { isGroupRow } = props
+  const groupFlags = useMemo(
+    () => (isGroupRow ? displayedRows.map((row, index) => isGroupRow(row, index)) : null),
+    [displayedRows, isGroupRow]
+  )
+  const isNavigable = useMemo(
+    () => (groupFlags ? (row: number) => !groupFlags[row] : undefined),
+    [groupFlags]
+  )
+  const marked = useMemo(
+    () => (props.markedRowIds ? new Set(props.markedRowIds) : null),
+    [props.markedRowIds]
+  )
 
   // ── Current cell and selection, kept inside the grid ──
   const activeControlled =
@@ -252,10 +279,11 @@ function DataGridInner<T extends RowData>(
       : props.activeCell !== undefined
         ? props.activeCell
         : (activeInner ?? undefined)
+  const firstRow = rowCount > 0 ? nearestNavigable(0, 1, rowCount, isNavigable) : -1
   const rawActive =
     activeControlled === undefined
-      ? rowCount > 0 && colCount > 0
-        ? { row: 0, col: 0 }
+      ? firstRow >= 0 && colCount > 0
+        ? { row: firstRow, col: 0 }
         : null
       : activeControlled
   const active: CellPosition | null =
@@ -279,9 +307,19 @@ function DataGridInner<T extends RowData>(
     colCount,
     displayedRows,
     visibleColumns,
-    editing
+    editing,
+    groupFlags
   })
-  latest.current = { active, ranges, rowCount, colCount, displayedRows, visibleColumns, editing }
+  latest.current = {
+    active,
+    ranges,
+    rowCount,
+    colCount,
+    displayedRows,
+    visibleColumns,
+    editing,
+    groupFlags
+  }
 
   const setActive = useCallback(
     (cell: CellPosition | null) => {
@@ -309,6 +347,7 @@ function DataGridInner<T extends RowData>(
     overscan,
     scrollMargin: headerHeight,
     scrollPaddingStart: headerHeight,
+    scrollPaddingEnd: footerHeight,
     // A scroller with no size yet (not laid out, a hidden window, a test DOM without layout) still
     // renders the rows a screen would show, instead of none.
     observeElementRect: (instance, callback) =>
@@ -374,7 +413,7 @@ function DataGridInner<T extends RowData>(
         const matrix: string[][] = []
         for (let row = bounds.top; row <= bounds.bottom; row++) {
           const item = data[row]
-          if (item === undefined) continue
+          if (item === undefined || latest.current.groupFlags?.[row]) continue
           const line: string[] = []
           for (let col = bounds.left; col <= bounds.right; col++) {
             const column = cols[col]
@@ -422,6 +461,7 @@ function DataGridInner<T extends RowData>(
         const rowIndex = bounds.top + r
         const row = data[rowIndex]
         if (row === undefined) break
+        if (latest.current.groupFlags?.[rowIndex]) continue
         for (let c = 0; c < width; c++) {
           const column = cols[bounds.left + c]?.def
           const source = fill ? matrix[0]![0] : matrix[r]?.[c]
@@ -454,7 +494,7 @@ function DataGridInner<T extends RowData>(
     (initialText?: string, cell?: CellPosition) => {
       const { displayedRows: data, visibleColumns: cols } = latest.current
       const at = cell ?? latest.current.active
-      if (!editable || !at) return false
+      if (!editable || !at || latest.current.groupFlags?.[at.row]) return false
       if (!canEditColumn(cols[at.col]?.def, data[at.row])) return false
       scrollIntoView(at)
       setEditing({ row: at.row, col: at.col, initialText })
@@ -463,20 +503,55 @@ function DataGridInner<T extends RowData>(
     [editable, scrollIntoView]
   )
 
+  const navigableCell = (cell: CellPosition) => !latest.current.groupFlags?.[cell.row]
+  const editableCell = (cell: CellPosition) =>
+    navigableCell(cell) &&
+    canEditColumn(
+      latest.current.visibleColumns[cell.col]?.def,
+      latest.current.displayedRows[cell.row]
+    )
+
   const stepFrom = (cell: CellPosition, move: EditMove): CellPosition | null => {
     const { rowCount: count, colCount: cols } = latest.current
-    if (move === 'down') return cell.row < count - 1 ? { row: cell.row + 1, col: cell.col } : null
-    if (move === 'up') return cell.row > 0 ? { row: cell.row - 1, col: cell.col } : null
-    if (move === 'right' || move === 'left') return tabTarget(cell, move === 'left', count, cols)
-    return null
+    if (move === 'none') return null
+    if (editNext === 'editable')
+      return tabTarget(cell, move === 'up' || move === 'left', count, cols, editableCell)
+    if (move === 'down' || move === 'up') {
+      const step = move === 'down' ? 1 : -1
+      for (let row = cell.row + step; row >= 0 && row < count; row += step)
+        if (navigableCell({ row, col: cell.col })) return { row, col: cell.col }
+      return null
+    }
+    return tabTarget(cell, move === 'left', count, cols, navigableCell)
+  }
+
+  /** Closes the editor and moves; `keepEditing` edits the next cell. */
+  const finishEdit = (from: CellPosition, move: EditMove, cancelled: boolean) => {
+    setEditing(null)
+    rootRef.current?.focus({ preventScroll: true })
+    const next = cancelled ? null : stepFrom(from, move)
+    if (!next) return
+    moveTo(next)
+    if (props.keepEditing) startEdit(undefined, next)
   }
 
   const endEdit = useCallback(
     (value: unknown, move: EditMove = 'none', cancelled = false) => {
       const current = latest.current.editing
-      if (!current) return
+      if (!current || current.pending) return
       const row = latest.current.displayedRows[current.row]
       const column = latest.current.visibleColumns[current.col]?.def
+      const reject = () => {
+        const editingNow = latest.current.editing
+        if (editingNow?.row !== current.row || editingNow.col !== current.col) return
+        const rejected = {
+          ...current,
+          pending: false,
+          rejections: (current.rejections ?? 0) + 1
+        }
+        latest.current.editing = rejected
+        setEditing(rejected)
+      }
       if (!cancelled && row !== undefined && column) {
         const previousValue = valueOf(column, row)
         if (!Object.is(previousValue, value)) {
@@ -488,21 +563,77 @@ function DataGridInner<T extends RowData>(
             value,
             previousValue
           })
-          if (result === false) return
+          if (result === false) return reject()
+          if (isThenable(result)) {
+            const waiting = { ...current, pending: true }
+            latest.current.editing = waiting
+            setEditing(waiting)
+            result.then(
+              (settled) => {
+                if (latest.current.editing !== waiting) return
+                if (settled === false) reject()
+                else finishEdit(current, move, false)
+              },
+              () => {
+                if (latest.current.editing === waiting) reject()
+              }
+            )
+            return
+          }
         }
       }
-      setEditing(null)
-      rootRef.current?.focus({ preventScroll: true })
-      const next = cancelled ? null : stepFrom(current, move)
-      if (next) moveTo(next)
+      finishEdit(current, move, cancelled)
     },
-    [props.onCellEdit, getRowId, moveTo]
+    [props.onCellEdit, getRowId, moveTo, startEdit, editNext, props.keepEditing]
   )
+
+  // ── Type-ahead seek ──
+  const seekText = useRef('')
+  const seekTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const typeAhead = props.typeAhead ? (props.typeAhead === true ? {} : props.typeAhead) : null
+  const setSeek = (text: string) => {
+    if (seekTimer.current) clearTimeout(seekTimer.current)
+    seekTimer.current = null
+    if (seekText.current !== text) {
+      seekText.current = text
+      props.onTypeAheadChange?.(text)
+    }
+    if (text && typeAhead)
+      seekTimer.current = setTimeout(() => setSeek(''), typeAhead.timeout ?? TYPE_AHEAD_MS)
+  }
+  useEffect(
+    () => () => {
+      if (seekTimer.current) clearTimeout(seekTimer.current)
+    },
+    []
+  )
+  /** The first navigable row matching the text, or -1. */
+  const seekRow = (text: string): number => {
+    if (!typeAhead || !active) return -1
+    const columnId =
+      typeAhead.columnId ?? sorting[0]?.columnId ?? visibleColumns[active.col]?.def.id
+    const column = columnId ? byId.get(columnId) : undefined
+    const wanted = normalizeSeek(text)
+    for (let index = 0; index < rowCount; index++) {
+      if (groupFlags?.[index]) continue
+      const row = displayedRows[index]!
+      const hit = typeAhead.match
+        ? typeAhead.match(row, text)
+        : !!column && normalizeSeek(textOf(column, row)).startsWith(wanted)
+      if (hit) return index
+    }
+    return -1
+  }
+  const seekTo = (text: string) => {
+    const index = seekRow(text)
+    if (index >= 0 && active) moveTo({ row: index, col: active.col })
+    return index >= 0
+  }
 
   // ── Keyboard ──
   const pageSize = () => {
     const height = scrollRef.current?.clientHeight ?? 0
-    return Math.max(1, Math.floor((height - headerHeight) / rowHeight) || 10)
+    return Math.max(1, Math.floor((height - headerHeight - footerHeight) / rowHeight) || 10)
   }
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -537,22 +668,34 @@ function DataGridInner<T extends RowData>(
       rowCount,
       colCount,
       pageSize: pageSize(),
-      mode: selectionMode
+      mode: selectionMode,
+      homeEndRows,
+      isNavigable
     })
     if (target) {
+      if (seekText.current) setSeek('')
       moveTo(target, event.shiftKey ? 'extend' : 'replace')
       return handled()
     }
     switch (event.key) {
       case 'Tab': {
         if (tabBehavior !== 'cell' || ctrl || event.altKey) return
-        const next = tabTarget(active, event.shiftKey, rowCount, colCount)
+        const next =
+          editNext === 'editable'
+            ? stepFrom(active, event.shiftKey ? 'left' : 'right')
+            : tabTarget(active, event.shiftKey, rowCount, colCount, navigableCell)
         if (!next) return
         moveTo(next)
         return handled()
       }
+      case 'Backspace':
+        if (!typeAhead || !seekText.current) return
+        setSeek(seekText.current.slice(0, -1))
+        if (seekText.current) seekTo(seekText.current)
+        return handled()
       case 'Enter': {
         if (ctrl || event.altKey) return
+        if (props.enterEdits && !event.shiftKey && startEdit()) return handled()
         const row = displayedRows[active.row]
         if (props.onRowActivate && row !== undefined && !event.shiftKey) {
           props.onRowActivate(row, active.row)
@@ -567,7 +710,10 @@ function DataGridInner<T extends RowData>(
         if (startEdit()) handled()
         return
       case 'Escape':
-        if (
+        if (seekText.current) {
+          setSeek('')
+          handled()
+        } else if (
           ranges.length > 1 ||
           (ranges[0] && !sameRangeAsCell(ranges[0], active, selectionMode))
         ) {
@@ -575,8 +721,16 @@ function DataGridInner<T extends RowData>(
           handled()
         }
         return
-      default:
-        if (isTypingKey(event) && startEdit(event.key)) handled()
+      default: {
+        if (!isTypingKey(event)) return
+        if (startEdit(event.key)) return handled()
+        if (!typeAhead || (event.key === ' ' && !seekText.current)) return
+        const text = seekText.current + event.key
+        // No match: the typed text stays as it was (the legacy seek ignores the key).
+        if (seekTo(text)) setSeek(text)
+        else setSeek(seekText.current)
+        handled()
+      }
     }
   }
 
@@ -596,6 +750,7 @@ function DataGridInner<T extends RowData>(
 
   const onCellMouseDown = (event: ReactMouseEvent, cell: CellPosition) => {
     if (event.button !== 0) return
+    if (groupFlags?.[cell.row]) return
     if (editing && sameCell(editing, cell)) return
     if (!editing) rootRef.current?.focus({ preventScroll: true })
     const how = event.shiftKey ? 'extend' : event.ctrlKey || event.metaKey ? 'add' : 'replace'
@@ -605,19 +760,25 @@ function DataGridInner<T extends RowData>(
     event.preventDefault()
   }
   const onCellMouseEnter = (cell: CellPosition) => {
-    if (dragging.current) moveTo(cell, 'extend')
+    if (dragging.current && !groupFlags?.[cell.row]) moveTo(cell, 'extend')
+  }
+  const onCellClick = (event: ReactMouseEvent, cell: CellPosition) => {
+    const row = displayedRows[cell.row]
+    if (!props.activateOnClick || row === undefined || groupFlags?.[cell.row]) return
+    if (event.shiftKey || event.ctrlKey || event.metaKey) return
+    props.onRowActivate?.(row, cell.row)
   }
   const onCellDoubleClick = (cell: CellPosition) => {
     const row = displayedRows[cell.row]
-    if (row === undefined) return
+    if (row === undefined || groupFlags?.[cell.row]) return
     if (editable && canEditColumn(visibleColumns[cell.col]?.def, row)) {
       if (!sameCell(active, cell)) moveTo(cell)
       startEdit(undefined, cell)
-    } else props.onRowActivate?.(row, cell.row)
+    } else if (!props.activateOnClick) props.onRowActivate?.(row, cell.row)
   }
   const onCellContextMenu = (event: ReactMouseEvent, cell: CellPosition) => {
     const row = displayedRows[cell.row]
-    if (!props.onCellContextMenu || row === undefined) return
+    if (!props.onCellContextMenu || row === undefined || groupFlags?.[cell.row]) return
     event.preventDefault()
     if (!cellSelected(ranges, cell.row, cell.col)) moveTo(cell)
     props.onCellContextMenu(cell, row, { clientX: event.clientX, clientY: event.clientY })
@@ -734,12 +895,46 @@ function DataGridInner<T extends RowData>(
   }
 
   // ── Imperative handle ──
+  const rowIndexById = useRef(new Map<string, number>())
+  rowIndexById.current = useMemo(
+    () => new Map(displayed.map((row, index) => [row.id, index])),
+    [displayed]
+  )
   useImperativeHandle(
     ref,
     (): DataGridHandle => ({
       focus: () => rootRef.current?.focus(),
       scrollToRow: (rowIndex) =>
         virtualizer.scrollToIndex(clamp(rowIndex, 0, Math.max(0, latest.current.rowCount - 1))),
+      scrollToCell: (cell) => {
+        const { rowCount: count, colCount: cols } = latest.current
+        if (count === 0 || cols === 0) return
+        scrollIntoView({ row: clamp(cell.row, 0, count - 1), col: clamp(cell.col, 0, cols - 1) })
+      },
+      setActiveRow: (rowIndex) => {
+        const {
+          rowCount: count,
+          colCount: cols,
+          active: current,
+          groupFlags: groups
+        } = latest.current
+        if (count === 0 || cols === 0) return
+        const target = clamp(rowIndex, 0, count - 1)
+        const row = nearestNavigable(
+          target,
+          1,
+          count,
+          groups ? (index) => !groups[index] : undefined
+        )
+        if (row >= 0) moveTo({ row, col: current?.col ?? 0 })
+      },
+      findRow: (predicate, from = 0) => {
+        const data = latest.current.displayedRows
+        for (let index = Math.max(0, from); index < data.length; index++)
+          if (predicate(data[index]!, index)) return index
+        return -1
+      },
+      getRowIndex: (rowId) => rowIndexById.current.get(rowId) ?? -1,
       getActiveCell: () => latest.current.active,
       setActiveCell: (cell) => (cell ? moveTo(cell) : setActive(null)),
       selectAll,
@@ -778,6 +973,7 @@ function DataGridInner<T extends RowData>(
     }),
     [
       virtualizer,
+      scrollIntoView,
       moveTo,
       setActive,
       selectAll,
@@ -810,7 +1006,7 @@ function DataGridInner<T extends RowData>(
   const alignClass = (column: DataGridColumn<T>) => `rdg-align-${column.align ?? 'start'}`
   const sortOf = (columnId: string) => sorting.find((item) => item.columnId === columnId)
 
-  const header = (
+  const header = showHeader && (
     <div
       role="rowgroup"
       className="rdg-header"
@@ -893,8 +1089,12 @@ function DataGridInner<T extends RowData>(
         column: column.def,
         value,
         initialText: editing.initialText,
+        pending: !!editing.pending,
+        rejections: editing.rejections ?? 0,
         commit: (next: unknown, move?: EditMove) => endEdit(next, move),
-        cancel: () => endEdit(undefined, 'none', true)
+        cancel: () => {
+          if (!latest.current.editing?.pending) endEdit(undefined, 'none', true)
+        }
       }
       content = column.def.editor ? (
         <div
@@ -926,7 +1126,9 @@ function DataGridInner<T extends RowData>(
         value,
         text,
         selected,
-        active: isActive
+        active: isActive,
+        rowActive: active?.row === rowIndex,
+        marked: !!marked?.has(getRowId(row, rowIndex))
       })
     } else content = <span className="rdg-cell-text">{text}</span>
     return (
@@ -945,6 +1147,7 @@ function DataGridInner<T extends RowData>(
         style={columnStyle(column)}
         onMouseDown={(event) => onCellMouseDown(event, position)}
         onMouseEnter={() => onCellMouseEnter(position)}
+        onClick={(event) => onCellClick(event, position)}
         onDoubleClick={() => onCellDoubleClick(position)}
         onContextMenu={(event) => onCellContextMenu(event, position)}
         onTouchStart={(event) => onCellTouchStart(event, position)}
@@ -972,31 +1175,112 @@ function DataGridInner<T extends RowData>(
           const row = displayedRows[item.index]
           if (row === undefined) return null
           const rowIndex = item.index
-          const selected = rowSelected(ranges, rowIndex)
+          const group = !!groupFlags?.[rowIndex]
+          const selected = !group && rowSelected(ranges, rowIndex)
+          const rowId = getRowId(row, rowIndex)
+          const isMarked = !group && !!marked?.has(rowId)
+          const rowActive = active?.row === rowIndex
+          const context: RowContext<T> = {
+            row,
+            rowIndex,
+            rowId,
+            selected,
+            rowActive,
+            marked: isMarked
+          }
+          // A group row or a custom row: one cell across the whole width.
+          const wide = group || !!props.renderRow
+          const position = { row: rowIndex, col: rowActive && active ? active.col : 0 }
           return (
             <div
               key={displayed[rowIndex]?.id ?? rowIndex}
               role="row"
-              aria-rowindex={rowIndex + 2}
-              aria-selected={selectionMode === 'row' ? selected : undefined}
-              data-active={active?.row === rowIndex || undefined}
+              aria-rowindex={rowIndex + rowBase}
+              aria-selected={selectionMode === 'row' && !group ? selected : undefined}
+              data-active={(!group && rowActive) || undefined}
+              data-marked={isMarked || undefined}
+              data-group={group || undefined}
               className={[
                 'rdg-row',
                 rowIndex % 2 === 1 && 'rdg-row-odd',
+                group && 'rdg-group-row',
+                isMarked && 'rdg-row-marked',
                 props.rowClassName?.(row, rowIndex)
               ]
                 .filter(Boolean)
                 .join(' ')}
               style={{ height: rowHeight, transform: `translateY(${item.start - headerHeight}px)` }}
             >
-              {visibleColumns.map((column, colIndex) =>
-                renderCell(row, rowIndex, column, colIndex)
+              {wide ? (
+                <div
+                  id={group ? undefined : cellId(position)}
+                  role="gridcell"
+                  aria-colindex={1}
+                  aria-colspan={colCount}
+                  aria-selected={!group && selectionMode === 'cell' ? selected : undefined}
+                  data-active={(!group && rowActive) || undefined}
+                  className={group ? 'rdg-cell rdg-group-cell' : 'rdg-cell rdg-row-content'}
+                  style={{ flex: '1 0 auto', minWidth: totalWidth }}
+                  onMouseDown={(event) => onCellMouseDown(event, position)}
+                  onMouseEnter={() => onCellMouseEnter(position)}
+                  onClick={(event) => onCellClick(event, position)}
+                  onDoubleClick={() => onCellDoubleClick(position)}
+                  onContextMenu={(event) => onCellContextMenu(event, position)}
+                  onTouchStart={(event) => onCellTouchStart(event, position)}
+                  onTouchMove={cancelLongPress}
+                  onTouchEnd={cancelLongPress}
+                >
+                  {group
+                    ? props.renderGroupRow
+                      ? props.renderGroupRow(context)
+                      : visibleColumns[0] && (
+                          <span className="rdg-cell-text">
+                            {textOf(visibleColumns[0].def, row)}
+                          </span>
+                        )
+                    : props.renderRow!(context)}
+                </div>
+              ) : (
+                visibleColumns.map((column, colIndex) =>
+                  renderCell(row, rowIndex, column, colIndex)
+                )
               )}
             </div>
           )
         })}
       </div>
     )
+
+  const footer = footerRows.length > 0 && (
+    <div role="rowgroup" className="rdg-footer" style={{ minWidth: totalWidth }}>
+      {footerRows.map((row, index) => (
+        <div
+          key={index}
+          role="row"
+          aria-rowindex={rowCount + rowBase + index}
+          className="rdg-footer-row"
+          style={{ height: rowHeight }}
+        >
+          {visibleColumns.map((column, colIndex) => (
+            <div
+              key={column.def.id}
+              role="gridcell"
+              aria-colindex={colIndex + 1}
+              data-pinned={column.pinned || undefined}
+              className={['rdg-cell', 'rdg-footer-cell', alignClass(column.def)].join(' ')}
+              style={columnStyle(column)}
+            >
+              {column.def.footer ? (
+                column.def.footer(row)
+              ) : (
+                <span className="rdg-cell-text">{textOf(column.def, row)}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  )
 
   return (
     <div
@@ -1006,7 +1290,7 @@ function DataGridInner<T extends RowData>(
       tabIndex={0}
       aria-label={props['aria-label']}
       aria-labelledby={props['aria-labelledby']}
-      aria-rowcount={rowCount + 1}
+      aria-rowcount={rowCount + footerRows.length + (showHeader ? 1 : 0)}
       aria-colcount={colCount}
       aria-multiselectable={multiSelect || undefined}
       aria-readonly={!editable || undefined}
@@ -1029,6 +1313,7 @@ function DataGridInner<T extends RowData>(
       <div ref={scrollRef} className="rdg-scroller">
         {header}
         {body}
+        {footer}
       </div>
     </div>
   )
@@ -1049,5 +1334,5 @@ const sameRangeAsCell = (range: CellRange, cell: CellPosition, mode: 'row' | 'ce
  * editing, sortable / resizable / reorderable / hideable / frozen columns. See README.
  */
 export const DataGrid = forwardRef(DataGridInner) as <T>(
-  props: DataGridProps<T> & { ref?: Ref<DataGridHandle> }
+  props: DataGridProps<T> & { ref?: Ref<DataGridHandle<T>> }
 ) => ReactElement

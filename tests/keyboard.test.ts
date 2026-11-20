@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isTypingKey, navigate, tabTarget } from '../src/keyboard'
+import { isTypingKey, navigate, nearestNavigable, normalizeSeek, tabTarget } from '../src/keyboard'
 
 const base = {
   ctrl: false,
@@ -76,5 +76,50 @@ describe('isTypingKey', () => {
     expect(isTypingKey(key('Enter'))).toBe(false)
     expect(isTypingKey(key('c', { ctrlKey: true }))).toBe(false)
     expect(isTypingKey(key('v', { metaKey: true }))).toBe(false)
+  })
+})
+
+describe('navigate: legacy keys and skipped rows', () => {
+  it('Ctrl+PageUp / Ctrl+PageDown go to the first / last row, same column', () => {
+    expect(go('PageUp', undefined, { ctrl: true })).toEqual(at(0, 2))
+    expect(go('PageDown', undefined, { ctrl: true })).toEqual(at(99, 2))
+  })
+
+  it('homeEndRows: Home / End and Ctrl+Home / Ctrl+End go to the first / last row, same column', () => {
+    const legacy = { homeEndRows: true } as Partial<typeof base>
+    expect(go('Home', undefined, legacy)).toEqual(at(0, 2))
+    expect(go('End', undefined, legacy)).toEqual(at(99, 2))
+    expect(go('Home', undefined, { ...legacy, ctrl: true })).toEqual(at(0, 2))
+    expect(go('End', undefined, { ...legacy, ctrl: true })).toEqual(at(99, 2))
+  })
+
+  it('skips rows that are not navigable, in the direction of the move', () => {
+    const isNavigable = (row: number) => row % 10 !== 0
+    const skip = { isNavigable } as Partial<typeof base>
+    expect(go('ArrowDown', at(49, 1), skip)).toEqual(at(51, 1))
+    expect(go('ArrowUp', at(51, 1), skip)).toEqual(at(49, 1))
+    expect(go('Home', at(5, 1), { ...skip, mode: 'row' })).toEqual(at(1, 1))
+    expect(go('ArrowUp', at(1, 1), skip)).toEqual(at(1, 1))
+  })
+
+  it('nearestNavigable searches the direction first, then the other way', () => {
+    const odd = (row: number) => row % 2 === 1
+    expect(nearestNavigable(4, 1, 10, odd)).toBe(5)
+    expect(nearestNavigable(4, -1, 10, odd)).toBe(3)
+    expect(nearestNavigable(0, -1, 10, odd)).toBe(1)
+    expect(nearestNavigable(3, 1, 10, () => false)).toBe(-1)
+    expect(nearestNavigable(3, 1, 10)).toBe(3)
+  })
+
+  it('tabTarget stops only on accepted cells', () => {
+    const editable = (cell: { col: number }) => cell.col === 1 || cell.col === 3
+    expect(tabTarget(at(0, 1), false, 3, 5, editable)).toEqual(at(0, 3))
+    expect(tabTarget(at(0, 3), false, 3, 5, editable)).toEqual(at(1, 1))
+    expect(tabTarget(at(1, 1), true, 3, 5, editable)).toEqual(at(0, 3))
+    expect(tabTarget(at(2, 3), false, 3, 5, editable)).toBeNull()
+  })
+
+  it('normalizeSeek ignores case and accents', () => {
+    expect(normalizeSeek('JOSÉ Ação')).toBe('jose acao')
   })
 })

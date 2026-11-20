@@ -27,6 +27,13 @@
     --rdg-editor-bg: Canvas;
     --rdg-editor-fg: CanvasText;
     --rdg-invalid: #dc2626;
+    /* Marked rows (markedRowIds), group / heading rows and footer (total) rows. */
+    --rdg-marked-bg: color-mix(in srgb, #f59e0b 22%, var(--rdg-bg));
+    --rdg-marked-fg: inherit;
+    --rdg-group-bg: var(--rdg-header-bg);
+    --rdg-group-fg: var(--rdg-header-fg);
+    --rdg-footer-bg: var(--rdg-header-bg);
+    --rdg-footer-fg: var(--rdg-header-fg);
     --rdg-font-size: inherit;
     --rdg-cell-padding: 0 8px;
 
@@ -221,6 +228,46 @@
   .rdg-cell[data-editing] {
     background: var(--rdg-editor-bg);
     padding: 0 4px;
+  }
+
+  .rdg-row-marked,
+  .rdg-row-marked .rdg-cell {
+    background: var(--rdg-marked-bg);
+    color: var(--rdg-marked-fg);
+  }
+
+  .rdg-group-row,
+  .rdg-group-row:hover {
+    background: var(--rdg-group-bg);
+    color: var(--rdg-group-fg);
+    font-weight: 600;
+  }
+
+  .rdg-row-content {
+    padding: 0;
+  }
+
+  /* The footer colour may be translucent: the grid colour underneath keeps it opaque. */
+  .rdg-footer {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    width: 100%;
+    background: var(--rdg-bg);
+  }
+
+  .rdg-footer-row {
+    display: flex;
+    width: 100%;
+    box-sizing: border-box;
+    border-top: 1px solid var(--rdg-border);
+    background: var(--rdg-footer-bg);
+    color: var(--rdg-footer-fg);
+    font-weight: 600;
+  }
+
+  .rdg-footer-cell[data-pinned] {
+    background: var(--rdg-footer-bg-pinned, var(--rdg-bg));
   }
 
   .rdg-empty {

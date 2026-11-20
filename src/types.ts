@@ -45,6 +45,31 @@ export interface CellContext<T> {
   selected: boolean
   /** The current cell. */
   active: boolean
+  /** The current cell is on this row (any column). */
+  rowActive: boolean
+  /** The row is marked (`markedRowIds`). */
+  marked: boolean
+}
+
+/** What `renderRow` and `renderGroupRow` get. */
+export interface RowContext<T> {
+  row: T
+  rowIndex: number
+  rowId: string
+  /** The row is selected (in a selected range). */
+  selected: boolean
+  /** The current cell is on this row. */
+  rowActive: boolean
+  marked: boolean
+}
+
+export interface TypeAheadOptions<T> {
+  /** The column searched. Default: the first sorted column, else the current column. */
+  columnId?: string
+  /** Milliseconds without typing before the typed text resets. Default 1000. */
+  timeout?: number
+  /** Whether a row matches the typed text. Default: the column's text starts with it (no case, no accents). */
+  match?: (row: T, text: string) => boolean
 }
 
 export interface EditorProps<T> {
@@ -60,6 +85,10 @@ export interface EditorProps<T> {
    */
   commit: (value: unknown, move?: EditMove) => void
   cancel: () => void
+  /** An async `onCellEdit` is running: the editor stays open and should not take input. */
+  pending: boolean
+  /** Times `onCellEdit` refused a value in this edit (`false` or a rejected promise): the editor stays open. */
+  rejections: number
 }
 
 export type EditMove = 'none' | 'down' | 'up' | 'right' | 'left'
@@ -97,6 +126,8 @@ export interface DataGridColumn<T> {
   editor?: (props: EditorProps<T>) => ReactNode
   /** Text (typed or pasted) to value. Default: the text itself. Return `undefined` to reject it. */
   parse?: (text: string, row: T) => unknown
+  /** Footer cell content for each of the grid's `footerRows`. Default: the formatted value. */
+  footer?: (row: T) => ReactNode
   /** Header tooltip. */
   title?: string
   headerClassName?: string
@@ -157,8 +188,21 @@ export interface DataGridProps<T> {
   overscan?: number
   /** Turns editing (and paste) on for the columns marked `editable`. */
   editable?: boolean
-  /** A cell edit. Return `false` to keep the editor open (invalid value). */
-  onCellEdit?: (change: CellChange<T>) => void | boolean
+  /**
+   * A cell edit. Return `false` to keep the editor open (invalid value). A promise keeps the editor open
+   * (`pending`) until it settles: `false` or a rejection keeps it open, anything else commits and moves.
+   */
+  onCellEdit?: (change: CellChange<T>) => void | boolean | Promise<void | boolean>
+  /** Enter on an editable cell starts editing it (before `onRowActivate`). Default `false`. */
+  enterEdits?: boolean
+  /**
+   * Where Enter / Tab go after an edit (and Enter / Tab when not editing, if they move): `cell`, the next
+   * cell below / right (default); `editable`, the next editable cell in reading order (Shift: previous),
+   * wrapping into the next row, like a legacy entry grid (code, qty, price, discount, next item).
+   */
+  editNext?: 'cell' | 'editable'
+  /** After an edit that moves, start editing the cell it moves to (when editable). Default `false`. */
+  keepEditing?: boolean
   /** A paste into editable cells. Default: one `onCellEdit` per cell. */
   onPaste?: (changes: CellChange<T>[]) => void
   /** Enter (when not editing a cell) and double-click on a row that cannot be edited. */
@@ -174,6 +218,34 @@ export interface DataGridProps<T> {
    * grid does not use (F-keys, Insert, Delete…) are never stopped, so window shortcuts keep working.
    */
   onKeyDown?: (event: KeyboardEvent<HTMLDivElement>, context: GridKeyContext<T>) => void
+  /** Legacy Home / End: first / last row in both modes; Ctrl+Home / Ctrl+End keep the column. Default `false`. */
+  homeEndRows?: boolean
+  /**
+   * Type-ahead seek: typing (when it does not start an edit) jumps to the first row whose text starts with
+   * the typed characters; Backspace removes the last one, Esc clears them. Default `false`.
+   */
+  typeAhead?: boolean | TypeAheadOptions<T>
+  /** The typed type-ahead text changed (`''`: cleared), to show it. */
+  onTypeAheadChange?: (text: string) => void
+  /** Marked rows (by row id), shown with `--rdg-marked-*` and `data-marked`. Independent of the selection. */
+  markedRowIds?: ReadonlySet<string> | readonly string[]
+  /**
+   * Group / heading rows: drawn across the whole width (`renderGroupRow`, default the first column's text),
+   * skipped by the keyboard, never selected, copied or edited. Sort them yourself (`manualSorting`).
+   */
+  isGroupRow?: (row: T, rowIndex: number) => boolean
+  renderGroupRow?: (context: RowContext<T>) => ReactNode
+  /** Rows fixed under the body (totals), drawn with each column's `footer` or formatted value. */
+  footerRows?: readonly T[]
+  /** Show the header row. Default `true`. */
+  showHeader?: boolean
+  /**
+   * Custom row content across the whole width instead of the cells (a menu, cards). The row keeps the grid's
+   * selection, keys and mouse handling.
+   */
+  renderRow?: (context: RowContext<T>) => ReactNode
+  /** A single click activates the row (`onRowActivate`), like a menu. Default `false`. */
+  activateOnClick?: boolean
   /** Tab: `cell` moves between cells (cell mode default); `leave` lets focus go to the next control (row mode default). */
   tabBehavior?: 'cell' | 'leave'
   rowClassName?: (row: T, rowIndex: number) => string | undefined
@@ -188,10 +260,19 @@ export interface DataGridProps<T> {
   autoFocus?: boolean
 }
 
-/** Imperative handle (`ref`). */
-export interface DataGridHandle {
+/** Imperative handle (`ref`). `T`: the row type (`any` by default, so an untyped ref fits any grid). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export interface DataGridHandle<T = any> {
   focus: () => void
   scrollToRow: (rowIndex: number) => void
+  /** Scrolls a cell into view (both directions) without moving the current cell. */
+  scrollToCell: (cell: CellPosition) => void
+  /** Moves the current cell to a row, keeping the column (the nearest navigable row). */
+  setActiveRow: (rowIndex: number) => void
+  /** The displayed index of the first row (from `from`) matching, or -1. */
+  findRow(predicate: (row: T, rowIndex: number) => boolean, from?: number): number
+  /** The displayed index of a row id, or -1. */
+  getRowIndex: (rowId: string) => number
   getActiveCell: () => CellPosition | null
   setActiveCell: (cell: CellPosition | null) => void
   selectAll: () => void
@@ -203,7 +284,7 @@ export interface DataGridHandle {
   startEdit: (initialText?: string) => void
   getColumnState: () => ColumnState
   /** The rows in displayed (sorted) order. */
-  getDisplayedRows: () => readonly unknown[]
+  getDisplayedRows: () => readonly T[]
   /** Column changes a host menu can offer (all reach `onColumnStateChange`). */
   moveColumn: (columnId: string, toIndex: number) => void
   /** `null` restores the column's own width. */

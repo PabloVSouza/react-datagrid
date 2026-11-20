@@ -9,7 +9,8 @@ interface DefaultEditorProps<T> extends EditorProps<T> {
 
 /**
  * The text editor: Enter / Shift+Enter commit and move down / up, Tab / Shift+Tab right / left, Esc cancels,
- * leaving the cell commits. A text `parse` rejects (undefined) keeps the editor open, marked invalid.
+ * leaving the cell commits. A text `parse` rejects (undefined) keeps the editor open, marked invalid; so does
+ * a value the host refuses. Read-only while an async `onCellEdit` runs.
  */
 export function DefaultEditor<T>({
   text,
@@ -18,7 +19,9 @@ export function DefaultEditor<T>({
   commit,
   cancel,
   align,
-  column
+  column,
+  pending,
+  rejections
 }: DefaultEditorProps<T>) {
   const [draft, setDraft] = useState(initialText ?? text)
   const [invalid, setInvalid] = useState(false)
@@ -33,7 +36,16 @@ export function DefaultEditor<T>({
     else element.setSelectionRange(element.value.length, element.value.length)
   }, [initialText])
 
+  // The host refused the value (`onCellEdit` returned false or its promise failed): edit again.
+  useEffect(() => {
+    if (rejections === 0) return
+    done.current = false
+    setInvalid(true)
+    input.current?.focus()
+  }, [rejections])
+
   const finish = (move: Parameters<typeof commit>[1]) => {
+    if (pending) return true
     const value = parse(draft)
     if (value === undefined) {
       setInvalid(true)
@@ -50,6 +62,8 @@ export function DefaultEditor<T>({
       className="rdg-editor"
       aria-label={typeof column.header === 'string' ? column.header : column.id}
       aria-invalid={invalid || undefined}
+      aria-busy={pending || undefined}
+      readOnly={pending}
       value={draft}
       style={{ textAlign: align === 'start' ? 'left' : align === 'end' ? 'right' : 'center' }}
       onChange={(event) => {
@@ -65,12 +79,14 @@ export function DefaultEditor<T>({
           finish(event.shiftKey ? 'left' : 'right')
         } else if (event.key === 'Escape') {
           event.preventDefault()
+          if (pending) return
           done.current = true
           cancel()
         } else return
         event.stopPropagation()
       }}
       onBlur={() => {
+        if (pending) return
         if (!done.current && !finish('none')) {
           // An invalid value on focus loss: drop the edit rather than trap the focus.
           done.current = true

@@ -2,7 +2,7 @@ import './styles.css'
 
 export { DataGrid, defaultCompare } from './DataGrid'
 export { parseTsv, toTsv } from './clipboard'
-export { navigate, tabTarget } from './keyboard'
+export { navigate, nearestNavigable, normalizeSeek, tabTarget } from './keyboard'
 export { boundsOf, selectedRowIndexes } from './selection'
 export type { Bounds } from './selection'
 export type {
@@ -18,7 +18,9 @@ export type {
   EditMove,
   EditorProps,
   GridKeyContext,
+  RowContext,
   SelectionMode,
   SortDirection,
-  SortItem
+  SortItem,
+  TypeAheadOptions
 } from './types'

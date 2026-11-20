@@ -13,9 +13,12 @@ Keyboard-first data grid for React that behaves like a desktop grid (WinForms `D
   Ctrl+V pastes into editable cells (one value fills the selection)
 - In-place editing: F2, double-click or typing starts; Enter / Tab commit and move; Esc cancels; editor slots per
   column; commit / cancel events with validation
+- Legacy (xBase / FiveWin browse) habits on request: Home / End to the first / last row, type-ahead seek, an
+  entry-grid edit flow (Enter / Tab to the next editable cell, keep editing), async validation of an edit
+- Marked rows, group / heading rows, footer (total) rows, headerless grids with custom rows (menus, lists)
 - Theming by CSS variables; ARIA `grid` roles; touch (tap, long press, native swipe scrolling)
 
-Status: `0.1.0`, developed against a real ERP (SAPE). Not published yet.
+Status: `0.2.0`, developed against a real ERP (SAPE). See [CHANGELOG](CHANGELOG.md).
 
 ## Installation
 
@@ -111,51 +114,92 @@ interface DataGridColumn<T> {
   editable?: boolean | ((row: T) => boolean)
   editor?: (props: EditorProps<T>) => ReactNode // default: text input
   parse?: (text: string, row: T) => unknown // typed / pasted text to value; undefined rejects
+  footer?: (row: T) => ReactNode // footer cell for each of footerRows; default the formatted value
   title?: string // header tooltip
   headerClassName?: string
   cellClassName?: string | ((row: T) => string | undefined)
 }
 ```
 
-`CellContext<T>`: `{ row, rowIndex, rowId, column, value, text, selected, active }`.
+`CellContext<T>`: `{ row, rowIndex, rowId, column, value, text, selected, active, rowActive, marked }`
+(`rowActive`: the current cell is on this row; `marked`: the row is in `markedRowIds`).
+
+`EditorProps<T>`: `{ row, rowIndex, column, value, initialText, commit(value, move), cancel(), pending, rejections }`.
+`pending` is true while an async `onCellEdit` runs (take no input); `rejections` counts the values the host
+refused in this edit (edit again, show the error).
 
 ## Props
 
-| Prop                                                               | Type                           | Default                                    |                                                                                              |
-| ------------------------------------------------------------------ | ------------------------------ | ------------------------------------------ | -------------------------------------------------------------------------------------------- |
-| `rows`                                                             | `readonly T[]`                 |                                            | Keep the array stable between renders.                                                       |
-| `columns`                                                          | `readonly DataGridColumn<T>[]` |                                            | Keep stable (module scope or `useMemo`).                                                     |
-| `getRowId`                                                         | `(row, index) => string`       |                                            |                                                                                              |
-| `selectionMode`                                                    | `'row' \| 'cell'`              | `'row'`                                    |                                                                                              |
-| `multiSelect`                                                      | `boolean`                      | `true`                                     | Ranges, Ctrl+click, Ctrl+A.                                                                  |
-| `activeCell` / `defaultActiveCell` / `onActiveCellChange`          | `CellPosition \| null`         | first cell                                 | Controlled or not.                                                                           |
-| `activeRowIndex` / `onActiveRowChange`                             | `number`                       |                                            | Row-mode shortcut for the current row (`-1`: none).                                          |
-| `selection` / `defaultSelection` / `onSelectionChange`             | `CellRange[]`                  |                                            | The ranges always contain the current cell.                                                  |
-| `sorting` / `defaultSorting` / `onSortingChange`                   | `SortItem[]`                   | `[]`                                       | `{ columnId, direction }`.                                                                   |
-| `manualSorting`                                                    | `boolean`                      | `false`                                    | Rows come sorted (server side).                                                              |
-| `columnState` / `defaultColumnState` / `onColumnStateChange`       | `ColumnState`                  | from columns                               | `{ order, widths, hidden, frozenStart, frozenEnd }`: persist it to remember a user's layout. |
-| `rowHeight` / `headerHeight`                                       | `number`                       | `32` / row height                          | Pixels.                                                                                      |
-| `overscan`                                                         | `number`                       | `8`                                        | Rows rendered beyond the visible ones.                                                       |
-| `editable`                                                         | `boolean`                      | `false`                                    | Turns on editing and paste for `editable` columns.                                           |
-| `onCellEdit`                                                       | `(change) => void \| false`    |                                            | `false` keeps the editor open.                                                               |
-| `onPaste`                                                          | `(changes) => void`            | one `onCellEdit` per cell                  |                                                                                              |
-| `onRowActivate`                                                    | `(row, rowIndex) => void`      |                                            | Enter and double-click (on cells that are not edited).                                       |
-| `onCellContextMenu`                                                | `(cell, row, point) => void`   |                                            | Right-click and long press.                                                                  |
-| `onKeyDown`                                                        | `(event, context) => void`     |                                            | Runs first; `event.preventDefault()` stops the grid handling the key.                        |
-| `tabBehavior`                                                      | `'cell' \| 'leave'`            | `cell` mode: `'cell'`, row mode: `'leave'` |                                                                                              |
-| `rowClassName`                                                     | `(row, rowIndex) => string`    |                                            |                                                                                              |
-| `empty`                                                            | `ReactNode`                    |                                            | Shown without rows.                                                                          |
-| `aria-label`, `aria-labelledby`, `className`, `style`, `autoFocus` |                                |                                            |                                                                                              |
+| Prop                                                               | Type                                         | Default                                    |                                                                                                                            |
+| ------------------------------------------------------------------ | -------------------------------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| `rows`                                                             | `readonly T[]`                               |                                            | Keep the array stable between renders.                                                                                     |
+| `columns`                                                          | `readonly DataGridColumn<T>[]`               |                                            | Keep stable (module scope or `useMemo`).                                                                                   |
+| `getRowId`                                                         | `(row, index) => string`                     |                                            |                                                                                                                            |
+| `selectionMode`                                                    | `'row' \| 'cell'`                            | `'row'`                                    |                                                                                                                            |
+| `multiSelect`                                                      | `boolean`                                    | `true`                                     | Ranges, Ctrl+click, Ctrl+A.                                                                                                |
+| `activeCell` / `defaultActiveCell` / `onActiveCellChange`          | `CellPosition \| null`                       | first cell                                 | Controlled or not.                                                                                                         |
+| `activeRowIndex` / `onActiveRowChange`                             | `number`                                     |                                            | Row-mode shortcut for the current row (`-1`: none).                                                                        |
+| `selection` / `defaultSelection` / `onSelectionChange`             | `CellRange[]`                                |                                            | The ranges always contain the current cell.                                                                                |
+| `sorting` / `defaultSorting` / `onSortingChange`                   | `SortItem[]`                                 | `[]`                                       | `{ columnId, direction }`.                                                                                                 |
+| `manualSorting`                                                    | `boolean`                                    | `false`                                    | Rows come sorted (server side).                                                                                            |
+| `columnState` / `defaultColumnState` / `onColumnStateChange`       | `ColumnState`                                | from columns                               | `{ order, widths, hidden, frozenStart, frozenEnd }`: persist it to remember a user's layout.                               |
+| `rowHeight` / `headerHeight`                                       | `number`                                     | `32` / row height                          | Pixels.                                                                                                                    |
+| `overscan`                                                         | `number`                                     | `8`                                        | Rows rendered beyond the visible ones.                                                                                     |
+| `editable`                                                         | `boolean`                                    | `false`                                    | Turns on editing and paste for `editable` columns.                                                                         |
+| `onCellEdit`                                                       | `(change) => void \| false \| Promise`       |                                            | `false` keeps the editor open. A promise keeps it open (`pending`) until it settles; `false` or a rejection keeps editing. |
+| `enterEdits`                                                       | `boolean`                                    | `false`                                    | Enter on an editable cell edits it (before `onRowActivate`).                                                               |
+| `editNext`                                                         | `'cell' \| 'editable'`                       | `'cell'`                                   | After an edit, Enter / Tab go to the next cell, or the next editable cell in reading order.                                |
+| `keepEditing`                                                      | `boolean`                                    | `false`                                    | After an edit that moves, edit the new cell (entry grids).                                                                 |
+| `homeEndRows`                                                      | `boolean`                                    | `false`                                    | Legacy Home / End: first / last row in both modes; Ctrl+Home / End keep the column.                                        |
+| `typeAhead`                                                        | `boolean \| TypeAheadOptions`                | `false`                                    | Typing seeks a row; `{ columnId, timeout, match }`.                                                                        |
+| `onTypeAheadChange`                                                | `(text) => void`                             |                                            | The typed seek text (`''` when cleared), to show it.                                                                       |
+| `markedRowIds`                                                     | `Set<string> \| string[]`                    |                                            | Marked rows (`data-marked`, `--rdg-marked-*`), apart from the selection.                                                   |
+| `isGroupRow` / `renderGroupRow`                                    | `(row, i) => boolean` / `(ctx) => ReactNode` |                                            | Full-width group / heading rows, skipped by the keys, never selected, copied or edited.                                    |
+| `footerRows`                                                       | `readonly T[]`                               |                                            | Rows fixed under the body (totals), drawn with each column's `footer`.                                                     |
+| `showHeader`                                                       | `boolean`                                    | `true`                                     | `false`: no header row.                                                                                                    |
+| `renderRow`                                                        | `(ctx) => ReactNode`                         |                                            | Custom content across the row instead of the cells; selection, keys and mouse stay the grid's.                             |
+| `activateOnClick`                                                  | `boolean`                                    | `false`                                    | One click calls `onRowActivate` (menus); double-click then does not.                                                       |
+| `onPaste`                                                          | `(changes) => void`                          | one `onCellEdit` per cell                  |                                                                                                                            |
+| `onRowActivate`                                                    | `(row, rowIndex) => void`                    |                                            | Enter and double-click (on cells that are not edited).                                                                     |
+| `onCellContextMenu`                                                | `(cell, row, point) => void`                 |                                            | Right-click and long press.                                                                                                |
+| `onKeyDown`                                                        | `(event, context) => void`                   |                                            | Runs first; `event.preventDefault()` stops the grid handling the key.                                                      |
+| `tabBehavior`                                                      | `'cell' \| 'leave'`                          | `cell` mode: `'cell'`, row mode: `'leave'` |                                                                                                                            |
+| `rowClassName`                                                     | `(row, rowIndex) => string`                  |                                            |                                                                                                                            |
+| `empty`                                                            | `ReactNode`                                  |                                            | Shown without rows.                                                                                                        |
+| `aria-label`, `aria-labelledby`, `className`, `style`, `autoFocus` |                                              |                                            |                                                                                                                            |
 
 `CellChange<T>`: `{ row, rowIndex, rowId, columnId, value, previousValue }`. Row indexes are positions in the
-displayed (sorted) rows.
+displayed (sorted) rows. `RowContext<T>` (`renderRow`, `renderGroupRow`): `{ row, rowIndex, rowId, selected,
+rowActive, marked }`.
+
+Group rows are part of `rows` and keep their place, so sort them yourself (`manualSorting`). A menu-like list:
+
+```tsx
+<DataGrid
+  rows={entries}
+  columns={[{ id: 'label', header: '' }]}
+  getRowId={(entry) => entry.id}
+  showHeader={false}
+  rowHeight={40}
+  activateOnClick
+  onRowActivate={open}
+  renderRow={({ row, rowIndex }) => <MenuItem entry={row} index={rowIndex + 1} />}
+/>
+```
+
+For a transparent grid (over a translucent panel) set `--rdg-bg: transparent` (and an opaque
+`--rdg-header-bg` if the header is shown).
 
 ## Handle (`ref`)
 
 ```ts
-const grid = useRef<DataGridHandle>(null)
+const grid = useRef<DataGridHandle<Customer>>(null)
 grid.current.focus()
 grid.current.scrollToRow(500)
+grid.current.scrollToCell({ row: 500, col: 3 }) // without moving the current cell
+grid.current.setActiveRow(42) // keeps the column
+grid.current.findRow((row) => row.code === 1234) // displayed index or -1 (optional start index)
+grid.current.getRowIndex('customer-id') // displayed index of a row id or -1
 grid.current.getActiveCell() // { row, col } | null
 grid.current.setActiveCell({ row: 0, col: 2 })
 grid.current.selectAll()
@@ -172,21 +216,24 @@ grid.current.setColumnFrozen('id', 'start') // or 'end', null
 
 ## Keyboard
 
-| Key                      | Row mode                                   | Cell mode                                               |
-| ------------------------ | ------------------------------------------ | ------------------------------------------------------- |
-| ↑ ↓                      | previous / next row                        | cell above / below                                      |
-| ← →                      | current column (scrolls sideways)          | cell left / right                                       |
-| Ctrl+arrow               | first / last row or column                 | edge of the grid in that direction                      |
-| Home / End               | first / last row                           | first / last cell of the row                            |
-| Ctrl+Home / Ctrl+End     | first / last row                           | first / last cell of the grid                           |
-| PageUp / PageDown        | one page of rows                           | one page of rows                                        |
-| Shift + any of the above | extends the range                          | extends the range                                       |
-| Tab / Shift+Tab          | leaves the grid (`tabBehavior`)            | next / previous cell, wrapping rows; leaves at the ends |
-| Enter / Shift+Enter      | `onRowActivate`; else (editable) down / up | the same                                                |
-| F2 / typing              | edits the current cell (editable columns)  | the same                                                |
-| Esc                      | collapses a range; else not handled        | the same                                                |
-| Ctrl+A                   | selects all                                | selects all                                             |
-| Ctrl+C / Ctrl+V          | copies / pastes                            | copies / pastes                                         |
+| Key                      | Row mode                                                   | Cell mode                                               |
+| ------------------------ | ---------------------------------------------------------- | ------------------------------------------------------- |
+| ↑ ↓                      | previous / next row                                        | cell above / below                                      |
+| ← →                      | current column (scrolls sideways)                          | cell left / right                                       |
+| Ctrl+arrow               | first / last row or column                                 | edge of the grid in that direction                      |
+| Home / End               | first / last row                                           | first / last cell of the row (`homeEndRows`: row)       |
+| Ctrl+Home / Ctrl+End     | first / last row                                           | first / last cell of the grid (`homeEndRows`: row)      |
+| PageUp / PageDown        | one page of rows                                           | one page of rows                                        |
+| Ctrl+PageUp / PageDown   | first / last row                                           | first / last row, same column                           |
+| Shift + any of the above | extends the range                                          | extends the range                                       |
+| Tab / Shift+Tab          | leaves the grid (`tabBehavior`)                            | next / previous cell, wrapping rows; leaves at the ends |
+| Enter / Shift+Enter      | `onRowActivate`; else (editable) down / up                 | the same                                                |
+| F2 / typing              | edits the current cell (editable columns)                  | the same                                                |
+| typing (`typeAhead`)     | seeks the first row starting with the text                 | the same (when typing does not start an edit)           |
+| Backspace (`typeAhead`)  | removes the last typed character                           | the same                                                |
+| Esc                      | clears the typed seek; collapses a range; else not handled | the same                                                |
+| Ctrl+A                   | selects all                                                | selects all                                             |
+| Ctrl+C / Ctrl+V          | copies / pastes                                            | copies / pastes                                         |
 
 While editing (default editor): Enter / Shift+Enter commit and move down / up, Tab / Shift+Tab commit and move
 right / left, Esc cancels, leaving the cell commits. Custom editors call `commit(value, move)` and `cancel()`;
@@ -218,6 +265,9 @@ Set the variables on `.rdg`, a parent or `:root`:
 | `--rdg-range-bg`, `--rdg-range-fg`                         | 22% selection colour, inherit | Cell mode ranges.                          |
 | `--rdg-active-outline`                                     | selection colour              | Current cell (cell mode).                  |
 | `--rdg-editor-bg`, `--rdg-editor-fg`, `--rdg-invalid`      |                               | Editor.                                    |
+| `--rdg-marked-bg`, `--rdg-marked-fg`                       | 22% amber, inherit            | Marked rows.                               |
+| `--rdg-group-bg`, `--rdg-group-fg`                         | header colours                | Group / heading rows.                      |
+| `--rdg-footer-bg`, `--rdg-footer-fg`                       | header colours                | Footer rows.                               |
 | `--rdg-font-size`, `--rdg-cell-padding`                    | inherit, `0 8px`              |                                            |
 
 Mapping an app's theme, e.g. one with its own selection variables:

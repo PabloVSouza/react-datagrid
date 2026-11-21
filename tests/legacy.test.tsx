@@ -341,3 +341,43 @@ describe('handle', () => {
     expect(activeCell(grid)).toEqual({ row: 4, col: 1 })
   })
 })
+
+describe('controls inside cells', () => {
+  const inputColumns: DataGridColumn<Item>[] = [
+    columns[0]!,
+    {
+      id: 'name',
+      header: 'Name',
+      cell: ({ row }) => <input aria-label={`name ${row.id}`} defaultValue={row.name} />
+    }
+  ]
+
+  it('a click on an input selects its cell and leaves the focus in the input', () => {
+    const onRowActivate = vi.fn()
+    const { grid } = setup({
+      selectionMode: 'cell',
+      columns: inputColumns,
+      onRowActivate,
+      activateOnClick: true
+    })
+    const input = screen.getByLabelText('name 3')
+    const down = fireEvent.mouseDown(input, { button: 0 })
+    expect(down).toBe(true)
+    input.focus()
+    expect(document.activeElement).toBe(input)
+    expect(activeCell(grid)).toEqual({ row: 2, col: 1 })
+    fireEvent.click(input)
+    fireEvent.doubleClick(input)
+    expect(onRowActivate).not.toHaveBeenCalled()
+  })
+
+  it('focus reaching an input (Tab) makes its cell current; its keys stay its own', () => {
+    const { grid } = setup({ selectionMode: 'cell', columns: inputColumns })
+    const input = screen.getByLabelText('name 2')
+    act(() => input.focus())
+    expect(activeCell(grid)).toEqual({ row: 1, col: 1 })
+    const key = fireEvent.keyDown(input, { key: 'ArrowDown' })
+    expect(key).toBe(true)
+    expect(activeCell(grid)).toEqual({ row: 1, col: 1 })
+  })
+})

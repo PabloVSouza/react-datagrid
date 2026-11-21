@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1 (2026-11-21)
+
+- Controls inside cells (inputs, selects, buttons, links, `[role=combobox]`, `[data-rdg-interactive]`) keep their
+  mouse and focus: a mouse-down on one makes its cell current without taking the focus or preventing the default
+  (before, an input in a cell could not be clicked into); a click or double-click on one never activates the row;
+  focus reaching one (Tab, a click) makes its cell current. Their keys stay theirs, as before.
+
 ## 0.2.0 (2026-11-20)
 
 Legacy desktop-grid habits (xBase / FiveWin browses) and the row kinds an ERP needs. Everything is opt-in;

@@ -1,6 +1,6 @@
 {
   "name": "@pablovsouza/react-datagrid",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Keyboard-first data grid for React: virtualized rows, row and cell selection, ranges, clipboard and in-place editing like a desktop grid.",
   "private": false,
   "license": "MIT",

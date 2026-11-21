@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
   type ForwardedRef,
+  type FocusEvent as ReactFocusEvent,
   type KeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
@@ -71,6 +72,17 @@ const DEFAULT_WIDTH = 150
 const DEFAULT_MIN_WIDTH = 40
 const LONG_PRESS_MS = 550
 const TYPE_AHEAD_MS = 1000
+
+/**
+ * Controls inside a cell that keep their own mouse and keyboard (inputs, selects, buttons, links, a
+ * host's `data-rdg-interactive` element): the grid selects their cell but leaves the focus to them.
+ */
+const INTERACTIVE =
+  'input, textarea, select, button, a[href], [contenteditable=""], [contenteditable="true"], [role=combobox], [role=button], [data-rdg-interactive]'
+const isInteractiveTarget = (target: EventTarget | null, cell: Element) => {
+  const element = target instanceof Element ? target.closest(INTERACTIVE) : null
+  return !!element && element !== cell && cell.contains(element)
+}
 
 const isThenable = (value: unknown): value is PromiseLike<unknown> =>
   !!value && typeof (value as PromiseLike<unknown>).then === 'function'
@@ -752,6 +764,12 @@ function DataGridInner<T extends RowData>(
     if (event.button !== 0) return
     if (groupFlags?.[cell.row]) return
     if (editing && sameCell(editing, cell)) return
+    // A control inside the cell (an input, a select…): its cell becomes current, the control keeps the
+    // focus and its own mouse behaviour.
+    if (isInteractiveTarget(event.target, event.currentTarget)) {
+      if (!sameCell(latest.current.active, cell)) moveTo(cell)
+      return
+    }
     if (!editing) rootRef.current?.focus({ preventScroll: true })
     const how = event.shiftKey ? 'extend' : event.ctrlKey || event.metaKey ? 'add' : 'replace'
     moveTo(cell, how)
@@ -765,16 +783,23 @@ function DataGridInner<T extends RowData>(
   const onCellClick = (event: ReactMouseEvent, cell: CellPosition) => {
     const row = displayedRows[cell.row]
     if (!props.activateOnClick || row === undefined || groupFlags?.[cell.row]) return
+    if (isInteractiveTarget(event.target, event.currentTarget)) return
     if (event.shiftKey || event.ctrlKey || event.metaKey) return
     props.onRowActivate?.(row, cell.row)
   }
-  const onCellDoubleClick = (cell: CellPosition) => {
+  const onCellDoubleClick = (event: ReactMouseEvent, cell: CellPosition) => {
+    if (isInteractiveTarget(event.target, event.currentTarget)) return
     const row = displayedRows[cell.row]
     if (row === undefined || groupFlags?.[cell.row]) return
     if (editable && canEditColumn(visibleColumns[cell.col]?.def, row)) {
       if (!sameCell(active, cell)) moveTo(cell)
       startEdit(undefined, cell)
     } else if (!props.activateOnClick) props.onRowActivate?.(row, cell.row)
+  }
+  /** Focus reaching a control inside a cell (Tab, a click): that cell becomes current. */
+  const onCellFocus = (event: ReactFocusEvent, cell: CellPosition) => {
+    if (!isInteractiveTarget(event.target, event.currentTarget)) return
+    if (!sameCell(latest.current.active, cell)) moveTo(cell)
   }
   const onCellContextMenu = (event: ReactMouseEvent, cell: CellPosition) => {
     const row = displayedRows[cell.row]
@@ -1148,7 +1173,8 @@ function DataGridInner<T extends RowData>(
         onMouseDown={(event) => onCellMouseDown(event, position)}
         onMouseEnter={() => onCellMouseEnter(position)}
         onClick={(event) => onCellClick(event, position)}
-        onDoubleClick={() => onCellDoubleClick(position)}
+        onFocus={(event) => onCellFocus(event, position)}
+        onDoubleClick={(event) => onCellDoubleClick(event, position)}
         onContextMenu={(event) => onCellContextMenu(event, position)}
         onTouchStart={(event) => onCellTouchStart(event, position)}
         onTouchMove={cancelLongPress}
@@ -1224,7 +1250,8 @@ function DataGridInner<T extends RowData>(
                   onMouseDown={(event) => onCellMouseDown(event, position)}
                   onMouseEnter={() => onCellMouseEnter(position)}
                   onClick={(event) => onCellClick(event, position)}
-                  onDoubleClick={() => onCellDoubleClick(position)}
+                  onFocus={(event) => onCellFocus(event, position)}
+                  onDoubleClick={(event) => onCellDoubleClick(event, position)}
                   onContextMenu={(event) => onCellContextMenu(event, position)}
                   onTouchStart={(event) => onCellTouchStart(event, position)}
                   onTouchMove={cancelLongPress}

@@ -18,7 +18,7 @@ Keyboard-first data grid for React that behaves like a desktop grid (WinForms `D
 - Marked rows, group / heading rows, footer (total) rows, headerless grids with custom rows (menus, lists)
 - Theming by CSS variables; ARIA `grid` roles; touch (tap, long press, native swipe scrolling)
 
-Status: `0.2.0`, developed against a real ERP (SAPE). See [CHANGELOG](CHANGELOG.md).
+Status: `0.2.1`, developed against a real ERP (SAPE). See [CHANGELOG](CHANGELOG.md).
 
 ## Installation
 
@@ -249,6 +249,10 @@ Click selects (Shift extends, Ctrl / Cmd adds a range), dragging across cells se
 or activates, right-click calls `onCellContextMenu`. Header click sorts, dragging a header onto another moves it
 there, dragging the header edge resizes and double-clicking it restores the width. On touch screens a tap
 selects, a long press (550 ms) calls `onCellContextMenu`, and scrolling is the browser's own (both axes).
+
+Controls inside cells (inputs, selects, buttons, links, `[role=combobox]`, or any element marked
+`data-rdg-interactive`) keep their own mouse, focus and keys: clicking or tabbing into one only makes its cell the
+current one.
 
 ## Theming
 
